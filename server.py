@@ -1,17 +1,16 @@
-# server.py  (hardened)
-import os, sys, traceback
+import os, traceback
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 import gradio as gr
 
-# --- Gradio mount lives at /tutor (important on Railway) ---
+# Ensure Gradio knows it's mounted at /tutor when behind a proxy
 os.environ.setdefault("GRADIO_ROOT_PATH", "/tutor")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 
-# Minimal preflight logging so you see it in Railway logs
+# Minimal preflight logs (helpful on Railway)
 print(f"[startup] BASE_DIR={BASE_DIR}")
 print(f"[startup] STATIC_DIR exists? {os.path.isdir(STATIC_DIR)}")
 if os.path.isdir(STATIC_DIR):
@@ -19,12 +18,10 @@ if os.path.isdir(STATIC_DIR):
 else:
     print("[startup] !! static/ folder missing at deploy root")
 
-# ----- Try to load your real Blocks() from app_groq_practice.py -----
+# --- Try to import your Gradio Blocks() named `demo` ---
 demo = None
-import_error_text = ""
-
 try:
-    from app_groq_practice import demo as _demo  # your real Blocks
+    from app_groq_practice import demo as _demo  # expects with gr.Blocks() as demo:
     demo = _demo
     print("[startup] Loaded app_groq_practice.demo OK")
 except Exception as e:
@@ -32,22 +29,26 @@ except Exception as e:
     print("[startup] Failed to import app_groq_practice.demo")
     print(import_error_text)
 
-    # Fallback Gradio UI that shows the import error instead of crashing
+    # Fallback UI (doesn't crash Gradio if import fails)
     with gr.Blocks(title="Startup Error") as demo:
         gr.Markdown(
             "### ❌ Failed to load `app_groq_practice.demo`\n"
             "Your server is up, but the app import failed. See details below."
         )
-        gr.Code(value=import_error_text, language="text", label="Import error details")
+        gr.Textbox(
+            value=import_error_text,
+            label="Import error details",
+            lines=20,
+            interactive=False
+        )
         gr.Markdown(
             "- Confirm the file is named **app_groq_practice.py** at the repo root.\n"
             "- Confirm it defines a top-level `with gr.Blocks() as demo:`."
         )
 
-# ------------- Build FastAPI and mount everything -------------
+# ------------ FastAPI app + static files ------------
 app = FastAPI()
 
-# serve /static and two friendly routes
 if os.path.isdir(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -65,10 +66,17 @@ def signup():
         return FileResponse(signup_path)
     return PlainTextResponse("static/signup.html not found", status_code=404)
 
-# mount gradio at /tutor
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    fav = os.path.join(STATIC_DIR, "favicon.ico")
+    if os.path.isfile(fav):
+        return FileResponse(fav)
+    return PlainTextResponse("", status_code=204)
+
+# Mount Gradio at /tutor
 app = gr.mount_gradio_app(app, demo, path="/tutor")
 
-# redirect bare queue requests → gradio queue
+# Redirect bare queue endpoint → Gradio queue path
 @app.api_route("/queue/{rest:path}", methods=["GET", "POST", "OPTIONS"])
 async def gradio_queue_shim(rest: str, request: Request):
     return RedirectResponse(url=f"/tutor/queue/{rest}", status_code=307)
@@ -77,17 +85,4 @@ async def gradio_queue_shim(rest: str, request: Request):
 def ping():
     return {"ok": True, "has_demo": demo is not None}
 
-# Extra debug: list /app directory & env
-@app.get("/_debug")
-def debug():
-    try:
-        return {
-            "cwd": os.getcwd(),
-            "listdir": os.listdir("."),
-            "static_exists": os.path.isdir(STATIC_DIR),
-            "static_listdir": os.listdir(STATIC_DIR) if os.path.isdir(STATIC_DIR) else [],
-            "GRADIO_ROOT_PATH": os.getenv("GRADIO_ROOT_PATH"),
-            "PYTHONPATH": os.getenv("PYTHONPATH"),
-        }
-    except Exception as e:
-        return {"error": str(e)}
+# No __main__ block needed on Railway; it uses the start command.
