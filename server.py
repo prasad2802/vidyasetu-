@@ -9,6 +9,11 @@ import gradio as gr
 from app_groq_practice import demo
 
 app = FastAPI()
+
+@app.api_route("/queue/{rest:path}", methods=["GET", "POST", "OPTIONS"])
+async def _gradio_queue_shim(rest: str, request: Request):
+    # Preserve method with 307 for POSTs
+    return RedirectResponse(url=f"/tutor/queue/{rest}", status_code=307)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 # 2) Serve static assets under /static and make "/" return index.html
@@ -41,6 +46,7 @@ def ping():
 if __name__ == "__main__":
     import os, uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
+
 
 
 
