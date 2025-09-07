@@ -1,7 +1,7 @@
 fastapi==0.110.0
 starlette==0.36.3
 uvicorn[standard]>=0.30
-gradio==4.44.0
+gradio==4.44.1
 
 itsdangerous
 jinja2
