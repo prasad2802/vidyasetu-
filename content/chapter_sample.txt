@@ -1,0 +1,30 @@
+Fraction addition:
+To add a/b + c/d, use a common denominator bd, then compute (ad + bc) / bd.
+Example: 1/2 + 1/3 = (3 + 2)/6 = 5/6.
+
+Greenhouse effect:
+CO2 and other greenhouse gases trap heat in Earth’s atmosphere, raising global temperatures.
+
+Photosynthesis:
+Plants use sunlight to convert CO2 and water into glucose and oxygen.
+When was the last time you went on a long trip? Where did you go? How did
+you travel? What was the duration of your trip? How much distance did you
+cover? Ask the elders who went with you to help you answer these questions.
+Human beings have always been
+interested in travelling. About a hundred
+years ago, there were far fewer vehicles
+than today. There were animal-drawn
+carts, cars, and trains. Long before this,
+thousands of years ago, people travelled
+long distances on foot or used animals
+to travel from one place to another.
+They also built boats and ships to travel
+across lakes, rivers, and seas. Boats were
+probably the first form of transport invented by humans, much before bullock
+carts! Do you know how many vehicles are currently there in your state?
+Reading and writing large numbers
+How do you write numbers to show several thousand objects?
+Let us start with 1,000. What numbers do we get when we keep adding a
+thousand?
+What number do we get when we add a thousand to 9,000? We get ten
+thousand. How do we write this number?
