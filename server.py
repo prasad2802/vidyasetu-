@@ -18,6 +18,9 @@ def ping():
 @app.get("/", include_in_schema=False)
 def root():
     return FileResponse("static/index.html")
+@app.get("/signup", include_in_schema=False)
+def signup():
+    return FileResponse("static/signup.html")
 
 # 3) Mount Gradio at /tutor (works across Gradio versions)
 #    Newer Gradio returns the FastAPI app; older modifies in place.
@@ -36,4 +39,5 @@ def ping():
 if __name__ == "__main__":
     import os, uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
+
 
