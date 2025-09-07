@@ -42,7 +42,7 @@ def explain_with_groq(prompt: str) -> str:
     """Try a list of Groq models until one succeeds; return clear errors otherwise."""
     global _LAST_WORKING_MODEL
 
-    key = (os.getenv("GROQ_API_KEY") or "").strip()
+    key = (os.getenv("GROQ_API_KEY") or "").strip().strip('"').strip("'")
 if not key.startswith("gsk_"):
     return "❌ GROQ_API_KEY missing/invalid on server."
 
@@ -322,6 +322,7 @@ with gr.Blocks() as demo:
         choice = gr.Dropdown(choices=["A","B","C","D"], label="Your Answer")
         check = gr.Button("Check Answer")
         check.click(check_answer, [choice], [out1, out2, out3])
+
 
 
 
