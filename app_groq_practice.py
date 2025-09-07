@@ -68,12 +68,12 @@ def explain_with_groq(prompt: str) -> str:
         try:
             r = requests.post(GROQ_URL, headers=headers, json=body, timeout=60)
             if r.status_code == 200:
-                _LAST_WORKING_MODEL = model  # cache the good one for this session
+                _LAST_WORKING_MODEL = model
                 data = r.json()
                 content = data["choices"][0]["message"]["content"].strip()
                 return f"(model: {model})\n{content}"
 
-            # Non-200 → decide whether to keep trying or stop
+            # Non-200 handling and fallbacks
             txt = r.text[:350]
             if r.status_code in (401, 403):
                 return f"❌ Groq {r.status_code} for {model}: {txt}"
@@ -249,3 +249,4 @@ with gr.Blocks() as demo:
         choice = gr.Dropdown(choices=["A", "B", "C", "D"], label="Your Answer")
         check = gr.Button("Check Answer")
         check.click(check_answer, [choice], [out1, out2, out3])
+
