@@ -58,7 +58,7 @@
       <button type="submit">Sign Up</button>
       <div class="row">
         <span></span>
-        <a href="index.html">Back to Sign In</a>
+        <a href="/">Back to Sign In</a>
       </div>
       <div id="msg" class="msg"></div>
     </form>
@@ -86,8 +86,9 @@
 
       msg.textContent = "Account created. Redirecting to Sign In…";
       msg.classList.add("fine");
-      setTimeout(()=>window.location.href="index.html", 900);
+      setTimeout(()=>window.location.href="/", 900);
     });
   </script>
 </body>
 </html>
+
