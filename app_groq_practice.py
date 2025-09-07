@@ -2,7 +2,6 @@ import os, time, random, requests
 os.environ["GRADIO_ROOT_PATH"] = "/tutor"
 import gradio as gr
 import sympy as sp
-from app_groq_practice import demo
 # =========================
 # Settings
 # =========================
@@ -322,4 +321,5 @@ with gr.Blocks() as demo:
         choice = gr.Dropdown(choices=["A","B","C","D"], label="Your Answer")
         check = gr.Button("Check Answer")
         check.click(check_answer, [choice], [out1, out2, out3])
+
 
