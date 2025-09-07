@@ -8,7 +8,8 @@ import gradio as gr
 from app_groq_practice import demo
 
 app = FastAPI()
-
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
 # 2) Serve static assets under /static and make "/" return index.html
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app = FastAPI()
@@ -17,10 +18,10 @@ def ping():
     return {"ok": True}
 @app.get("/", include_in_schema=False)
 def root():
-    return FileResponse("static/index.html")
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 @app.get("/signup", include_in_schema=False)
 def signup():
-    return FileResponse("static/signup.html")
+    return FileResponse(os.path.join(STATIC_DIR, "signup.html"))
 
 # 3) Mount Gradio at /tutor (works across Gradio versions)
 #    Newer Gradio returns the FastAPI app; older modifies in place.
@@ -39,5 +40,6 @@ def ping():
 if __name__ == "__main__":
     import os, uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
+
 
 
