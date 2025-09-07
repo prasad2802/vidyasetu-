@@ -11,7 +11,10 @@ app = FastAPI()
 
 # 2) Serve static assets under /static and make "/" return index.html
 app.mount("/static", StaticFiles(directory="static"), name="static")
-
+app = FastAPI()
+@app.get("/ping")
+def ping():
+    return {"ok": True}
 @app.get("/", include_in_schema=False)
 def root():
     return FileResponse("static/index.html")
