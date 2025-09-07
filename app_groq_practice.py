@@ -229,6 +229,7 @@ def check_answer(choice):
 # =========================
 # UI
 # =========================
+topic_choices = sorted(MCQ_BANK.keys())
 with gr.Blocks() as demo:
     gr.Markdown("## 📘 Personalized Tutor + Practice (Groq) — 5-correct target / Math + Chemistry (with auto-fallback)")
 
@@ -240,7 +241,7 @@ with gr.Blocks() as demo:
         gr.Button("Send").click(tutor, [q, hint], [ans, dbg])
 
     with gr.Tab("Practice"):
-        topic = gr.Dropdown(choices=list(MCQ_BANK.keys()), value="Fractions", label="Topic")
+        topic = gr.Dropdown(choices=topic_choices, value=topic_choices[0], label="Topic")
         out1 = gr.Textbox(label="Status/Feedback")
         out2 = gr.Textbox(label="Question")
         out3 = gr.Textbox(label="Progress")
@@ -249,4 +250,5 @@ with gr.Blocks() as demo:
         choice = gr.Dropdown(choices=["A", "B", "C", "D"], label="Your Answer")
         check = gr.Button("Check Answer")
         check.click(check_answer, [choice], [out1, out2, out3])
+
 
