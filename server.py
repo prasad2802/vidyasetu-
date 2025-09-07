@@ -85,4 +85,17 @@ async def gradio_queue_shim(rest: str, request: Request):
 def ping():
     return {"ok": True, "has_demo": demo is not None}
 
+@app.get("/_debug")
+def debug():
+    key = (os.getenv("GROQ_API_KEY") or "").strip().strip('"').strip("'")
+    return {
+        "has_groq_key": bool(key),
+        "groq_key_prefix": key[:4],   # should be "gsk_"
+        "groq_key_len": len(key),
+        "static_exists": os.path.isdir(STATIC_DIR),
+        "static_listdir": os.listdir(STATIC_DIR) if os.path.isdir(STATIC_DIR) else [],
+        "GRADIO_ROOT_PATH": os.getenv("GRADIO_ROOT_PATH"),
+    }
+
 # No __main__ block needed on Railway; it uses the start command.
+
