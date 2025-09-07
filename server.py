@@ -37,7 +37,9 @@ try:
 except TypeError:
     # Very old Gradio fallback
     gr.mount_gradio_app(app, demo, path="/tutor")
-
+@app.api_route("/queue/{rest:path}", methods=["GET", "POST", "OPTIONS"])
+async def gradio_queue_shim(rest: str, request: Request):
+    return RedirectResponse(url=f"/tutor/queue/{rest}", status_code=307)
 # Optional: simple health check
 @app.get("/ping")
 def ping():
@@ -46,6 +48,7 @@ def ping():
 if __name__ == "__main__":
     import os, uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
+
 
 
 
