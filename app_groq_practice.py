@@ -16,7 +16,7 @@ _LAST_WORKING_MODEL = None
 def explain_with_groq(prompt: str) -> str:
     """Return a string; never raise so the UI can load even if the key is wrong."""
     global _LAST_WORKING_MODEL
-    key = (os.getenv("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") or "").strip().strip('"').strip("'")
+    key = (os.getenv("GROQ_API_KEY") or "").strip().strip('"').strip("'")
     if not key.startswith("gsk_"):
         return "❌ GROQ_API_KEY missing/invalid on server."
 
@@ -162,4 +162,5 @@ with gr.Blocks() as demo:
         gr.Button("Start Practice").click(start_practice, [topic], [out1, out2, out3])
         choice = gr.Dropdown(choices=["A","B","C","D"], label="Your Answer")
         gr.Button("Check Answer").click(check_answer, [choice], [out1, out2, out3])
+
 
