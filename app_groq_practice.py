@@ -1,8 +1,9 @@
 """
-Vidya Setu — Adaptive Tutor + Auto-Generated Multi-Topic Quiz
-- Tab 1: Tutor (Groq) — your working logic kept
-- Tab 2: Adaptive Exam — auto-generated MCQs, 5-correct-per-topic target, difficulty adapts
-- FastAPI app with Gradio mounted at "/" (works on Railway & Cloud Run)
+Vidya Setu — Tutor (Groq) + Adaptive Multi-Topic Exam
+- Tab 1: Tutor (uses GROQ_API_KEY) — stepwise/explainer
+- Tab 2: Adaptive Exam — auto-generated MCQs, difficulty up/down,
+  target N correct per topic, auto-advance, final report
+- FastAPI + Gradio mounted at "/"
 """
 
 import os, time, random, math, requests
@@ -11,15 +12,15 @@ from fastapi import FastAPI
 import gradio as gr
 import sympy as sp
 
-# ---------- Config ----------
+# ---------------- Config ----------------
 TOPIC_TARGET_CORRECT = int(os.getenv("TOPIC_TARGET_CORRECT", "5"))
 DIFF_LEVELS = ["Easy", "Medium", "Hard"]
 
-# If you deploy under a subpath (rare), set GRADIO_ROOT_PATH as an env var on the platform.
-# Do NOT hardcode it here unless you know you need it.
-# Example: os.environ["GRADIO_ROOT_PATH"] = "/tutor"
+# If you deploy behind a subpath, set this as an ENV on the platform:
+#   GRADIO_ROOT_PATH=/tutor
+# Do NOT hardcode it here.
 
-# ---------- Groq tutor (your working code, kept) ----------
+# ------------- Tutor (Groq) -------------
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_FALLBACKS = [
     os.getenv("GROQ_MODEL", "").strip() or "llama-3.3-70b-versatile",
@@ -29,7 +30,7 @@ GROQ_FALLBACKS = [
 _LAST_WORKING_MODEL = None
 
 def explain_with_groq(prompt: str) -> str:
-    """Return a string; never raise so the UI can load even if the key is wrong."""
+    """Return a string; never raise so the UI still loads if key is wrong."""
     global _LAST_WORKING_MODEL
     key = (os.getenv("GROQ_API_KEY") or "").strip().strip('"').strip("'")
     if not key.startswith("gsk_"):
@@ -49,16 +50,16 @@ def explain_with_groq(prompt: str) -> str:
             r = requests.post(
                 GROQ_URL,
                 headers=headers,
-                json={"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.2},
+                json={"model": model, "messages": [{"role":"user","content":prompt}], "temperature": 0.2},
                 timeout=60,
             )
             if r.status_code == 200:
                 _LAST_WORKING_MODEL = model
                 return r.json()["choices"][0]["message"]["content"].strip()
             txt = r.text[:350]
-            if r.status_code in (401, 403):
+            if r.status_code in (401, 403):  # bad key
                 return f"❌ Groq {r.status_code} {txt}"
-            if r.status_code in (404, 422, 429):
+            if r.status_code in (404, 422, 429):  # try another model
                 last_err = f"ℹ️ {r.status_code} on {model}: {txt}"
                 continue
             last_err = f"❌ HTTP {r.status_code} on {model}: {txt}"
@@ -73,10 +74,10 @@ def solve_math(expr: str):
     except Exception:
         return None
 
-STATE_TUTOR = {"turns": 0, "rolling_acc_user": 0.7, "rolling_acc_skill": 0.7, "hints": 0}
+STATE_TUTOR = {"turns":0, "rolling_acc_user":0.7, "rolling_acc_skill":0.7, "hints":0}
 
 def predict_next_prob():
-    return 0.5 * STATE_TUTOR["rolling_acc_user"] + 0.5 * STATE_TUTOR["rolling_acc_skill"]
+    return 0.5*STATE_TUTOR["rolling_acc_user"] + 0.5*STATE_TUTOR["rolling_acc_skill"]
 
 def adapt_mode(p):
     if p < 0.4: return "scaffold"
@@ -108,7 +109,7 @@ def tutor(question, want_hint):
     meta = f"Mode={mode} | p_next={p:.2f} | turns={STATE_TUTOR['turns']}"
     return ans, meta
 
-# ---------- Auto-generated question generators ----------
+# ------- Auto-generated MCQ generators -------
 def _choices_with_distractors(correct, spread=5, count=4):
     opts = {str(correct)}
     try:
@@ -127,23 +128,14 @@ def q_fractions(diff: str) -> Tuple[str, str, List[str]]:
     rng = {"Easy": 9, "Medium": 12, "Hard": 20}[diff]
     a, b, c, d = random.randint(1, rng//2), random.randint(2, rng), random.randint(1, rng//2), random.randint(2, rng)
     op = random.choice(["+", "-", "×"])
-    if op == "+":
-        num, den = a*d + c*b, b*d
-        q = f"Compute {a}/{b} + {c}/{d} (simplify)."
-    elif op == "-":
-        num, den = a*d - c*b, b*d
-        q = f"Compute {a}/{b} - {c}/{d} (simplify)."
-    else:
-        num, den = a*c, b*d
-        q = f"Compute {a}/{b} × {c}/{d} (simplify)."
-    g = math.gcd(abs(num), den)
-    num //= g; den //= g
+    if op == "+": num, den = a*d + c*b, b*d; q = f"Compute {a}/{b} + {c}/{d} (simplify)."
+    elif op == "-": num, den = a*d - c*b, b*d; q = f"Compute {a}/{b} - {c}/{d} (simplify)."
+    else: num, den = a*c, b*d; q = f"Compute {a}/{b} × {c}/{d} (simplify)."
+    g = math.gcd(abs(num), den); num //= g; den //= g
     ans = f"{num}/{den}" if den != 1 else f"{num}"
     opts = {ans}
     if den != 1:
-        opts.add(f"{num+1}/{den}")
-        opts.add(f"{max(1,num)}/{max(1,den-1)}")
-        opts.add(f"{num+2}/{den}")
+        opts.add(f"{num+1}/{den}"); opts.add(f"{max(1,num)}/{max(1,den-1)}"); opts.add(f"{num+2}/{den}")
     else:
         opts |= {str(num+1), str(num+2), str(num-1)}
     choices = list(opts); random.shuffle(choices)
@@ -163,12 +155,9 @@ def q_percentages(diff: str):
     base = random.randint(40, {"Easy": 300, "Medium": 600, "Hard": 1200}[diff])
     pct  = random.choice([5,8,10,12,15,18,20,25,30,40,50])
     kind = random.choice(["of","increase","decrease"])
-    if kind == "of":
-        ans = round(base * pct / 100, 2); q = f"Find {pct}% of {base}."
-    elif kind == "increase":
-        ans = round(base * (1 + pct/100), 2); q = f"{base} increased by {pct}% equals?"
-    else:
-        ans = round(base * (1 - pct/100), 2); q = f"{base} decreased by {pct}% equals?"
+    if kind == "of": ans = round(base * pct / 100, 2); q = f"Find {pct}% of {base}."
+    elif kind == "increase": ans = round(base * (1 + pct/100), 2); q = f"{base} increased by {pct}% equals?"
+    else: ans = round(base * (1 - pct/100), 2); q = f"{base} decreased by {pct}% equals?"
     return q, str(ans), _choices_with_distractors(ans, spread=max(2, int(base*0.05)))
 
 def q_algebra(diff: str):
@@ -182,32 +171,30 @@ def q_geometry(diff: str):
     kind = random.choice(["area_rect","perim_rect","area_circle","tri_area"])
     scale = {"Easy": 15, "Medium": 25, "Hard": 40}[diff]
     if kind == "area_rect":
-        l,w = random.randint(3, scale), random.randint(3, scale)
-        ans = l*w; q = f"Area of rectangle (l={l} cm, w={w} cm)?"
+        l,w = random.randint(3, scale), random.randint(3, scale); ans = l*w
+        q = f"Area of rectangle (l={l} cm, w={w} cm)?"
     elif kind == "perim_rect":
-        l,w = random.randint(3, scale), random.randint(3, scale)
-        ans = 2*(l+w); q = f"Perimeter of rectangle (l={l} cm, w={w} cm)?"
+        l,w = random.randint(3, scale), random.randint(3, scale); ans = 2*(l+w)
+        q = f"Perimeter of rectangle (l={l} cm, w={w} cm)?"
     elif kind == "area_circle":
-        r = random.randint(2, max(5, scale//2))
-        ans = round(3.14*r*r, 2); q = f"Area of circle (r={r} cm). Use π≈3.14."
+        r = random.randint(2, max(5, scale//2)); ans = round(3.14*r*r, 2)
+        q = f"Area of circle (r={r} cm). Use π≈3.14."
     else:
-        b,h = random.randint(4, scale), random.randint(4, scale)
-        ans = 0.5*b*h; q = f"Area of triangle (base={b} cm, height={h} cm)?"
+        b,h = random.randint(4, scale), random.randint(4, scale); ans = 0.5*b*h
+        q = f"Area of triangle (base={b} cm, height={h} cm)?"
     return q, str(ans), _choices_with_distractors(ans, spread=5)
 
 def q_ratio(diff: str):
     limit = {"Easy": 80, "Medium": 200, "Hard": 400}[diff]
-    a,b = random.randint(1,9), random.randint(1,9)
-    total = random.randint(40, limit)
-    part = random.choice(["first","second"])
-    s = a+b; ans = (a if part=="first" else b) * total / s
+    a,b = random.randint(1,9), random.randint(1,9); total = random.randint(40, limit)
+    part = random.choice(["first","second"]); s = a+b
+    ans = (a if part=="first" else b) * total / s
     q = f"Divide {total} in the ratio {a}:{b}. What is the {part} part?"
     return q, str(int(ans)), _choices_with_distractors(int(ans), spread=5)
 
 def q_hcflcm(diff: str):
     x,y = random.randint(6, 80 if diff!="Easy" else 40), random.randint(6, 80 if diff!="Easy" else 40)
-    kind = random.choice(["HCF","LCM"])
-    g = math.gcd(x,y)
+    kind = random.choice(["HCF","LCM"]); g = math.gcd(x,y)
     ans = g if kind=="HCF" else x*y//g
     q = f"Find {kind} of {x} and {y}."
     return q, str(ans), _choices_with_distractors(ans, spread=5)
@@ -241,8 +228,7 @@ def q_chem(diff: str):
     if random.choice([True, False]):
         q, ans = f"Symbol of **{name}**?", sym
         choices = _choices_with_distractors(ans, spread=2)
-        # ensure enough distractors
-        if len(choices) < 4:
+        if len(choices) < 4:  # ensure 4 options
             pool = [s for _, s, _ in CHEM]
             while len(choices) < 4:
                 choices.append(random.choice(pool))
@@ -265,22 +251,11 @@ TOPICS: Dict[str, callable] = {
     "Chemistry: Symbols & Atomic Numbers": q_chem,
 }
 
-# ---------- Adaptive engine for “5 correct per topic” ----------
-EXAM = {}  # state for the exam tab
-
-def gen_question(topic: str, diff_idx: int):
-    diff = DIFF_LEVELS[diff_idx]
-    q, ans, choices = TOPICS[topic](diff)
-    return q, ans, choices, diff
-
-def adapt(next_up: bool, curr_idx: int) -> int:
-    if next_up:   return min(2, curr_idx + 1)
-    else:         return max(0, curr_idx - 1)
-
-# ---------- UI ----------
+# ------------- Build UI -------------
 with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
     gr.Markdown("# Vidya Setu — Personalized Tutor & Adaptive Exam")
 
+    # ----- Tab 1: Tutor -----
     with gr.Tab("Tutor (Groq)"):
         q = gr.Textbox(label="Ask a question")
         want_hint = gr.Checkbox(label="Hint only")
@@ -288,10 +263,12 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
         dbg = gr.Textbox(label="Debug/State")
         gr.Button("Send").click(tutor, [q, want_hint], [ans, dbg])
 
+    # ----- Tab 2: Adaptive Exam -----
     with gr.Tab("Adaptive Exam"):
-        gr.Markdown("**How it works:** Each topic continues until you get "
-                    f"**{TOPIC_TARGET_CORRECT} correct**. Difficulty adapts up/down. "
-                    "When a topic reaches the target, we move to the next. Final report at the end.")
+        gr.Markdown(
+            f"**How it works:** Each topic continues until you get **{TOPIC_TARGET_CORRECT} correct**. "
+            "Difficulty adapts up/down. When a topic reaches the target, we move to the next. Final report at the end."
+        )
 
         topic_select = gr.CheckboxGroup(
             choices=list(TOPICS.keys()),
@@ -314,11 +291,22 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
 
         report = gr.Markdown()
 
+        # ✅ one shared state for this tab
+        exam_state = gr.State({})
+
+        # ---- handlers ----
+        def gen_question(topic: str, diff_idx: int):
+            diff = DIFF_LEVELS[diff_idx]
+            q, ans, choices = TOPICS[topic](diff)
+            return q, ans, choices, diff
+
+        def adapt(up: bool, idx: int) -> int:
+            return min(2, idx + 1) if up else max(0, idx - 1)
+
         def start_exam(topics):
             if not topics:
                 return ("Please select at least one topic.", "", gr.update(choices=[], value=None),
                         "", "", "", {}, "")
-            # initialize state
             st = {
                 "topics": topics,
                 "topic_idx": 0,
@@ -328,15 +316,15 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
                 "results": {t: {"correct": 0, "attempts": 0} for t in topics},
                 "answer": None,
                 "score_total": 0,
-                "history": [],                # [(topic, diff, correct)]
+                "last_feedback": "",
             }
             topic = st["topics"][0]
             q, ans, choices, diff = gen_question(topic, st["diff_idx"])
             st["answer"] = ans
             status = f"**Exam started** with topics: {', '.join(topics)}"
-            curr = f"**Topic:** {topic}  |  **Difficulty:** {diff}"
-            prog = f"Correct in topic: **0 / {TOPIC_TARGET_CORRECT}**"
-            score = f"**Overall correct:** 0"
+            curr   = f"**Topic:** {topic}  |  **Difficulty:** {diff}"
+            prog   = f"Correct in topic: **0 / {TOPIC_TARGET_CORRECT}**"
+            score  = f"**Overall correct:** 0"
             return status, q, gr.update(choices=choices, value=None), curr, prog, score, st, ""
 
         def check_answer(choice, st):
@@ -345,9 +333,9 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
             topic = st["topics"][st["topic_idx"]]
             st["attempts_in_topic"] += 1
             st["results"][topic]["attempts"] += 1
-            correct = (choice is not None) and (str(choice).strip() == str(st["answer"]).strip())
 
-            if correct:
+            is_correct = (choice is not None) and (str(choice).strip() == str(st["answer"]).strip())
+            if is_correct:
                 st["correct_in_topic"] += 1
                 st["results"][topic]["correct"] += 1
                 st["score_total"] += 1
@@ -357,8 +345,7 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
                 msg = f"❌ Wrong. Correct answer: **{st['answer']}**"
                 st["diff_idx"] = adapt(False, st["diff_idx"])
 
-            diff = DIFF_LEVELS[st["diff_idx"]]
-            st["history"].append((topic, diff, correct))
+            st["last_feedback"] = msg
             return msg, st, ""
 
         def next_step(st):
@@ -366,12 +353,12 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
                 return ("Click **Start Exam** first.", "", gr.update(choices=[], value=None),
                         "", "", "", st, "")
             topics = st["topics"]
-            topic = topics[st["topic_idx"]]
+            topic  = topics[st["topic_idx"]]
 
             # Topic finished?
             if st["correct_in_topic"] >= TOPIC_TARGET_CORRECT:
                 st["topic_idx"] += 1
-                st["diff_idx"] = 0                   # reset to Easy for next topic
+                st["diff_idx"] = 0
                 st["correct_in_topic"] = 0
                 st["attempts_in_topic"] = 0
 
@@ -383,8 +370,7 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
                         att = max(1, v["attempts"])
                         acc = round(100 * v["correct"] / att)
                         lines.append(f"- **{t}** — {v['correct']} / {v['attempts']}  (**{acc}%**)")
-                        if acc < 80:
-                            weak.append((t, acc))
+                        if acc < 80: weak.append((t, acc))
                     if weak:
                         lines.append("\n**Focus on:** " + ", ".join([f"{t} ({a}%)" for t,a in weak]))
                     if os.getenv("GROQ_API_KEY"):
@@ -393,7 +379,7 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
                     return ("🎉 Exam finished!", "", gr.update(choices=[], value=None),
                             "", "", f"**Overall correct:** {st['score_total']}", st, report_md)
 
-                # move to first question of next topic
+                # Move to first question of next topic
                 topic = topics[st["topic_idx"]]
                 q, ans, choices, diff = gen_question(topic, st["diff_idx"])
                 st["answer"] = ans
@@ -403,24 +389,23 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
                 return ("➡️ Topic complete. Moving on.", q, gr.update(choices=choices, value=None),
                         curr, prog, score, st, "")
 
-            # Still in same topic → ask next question
+            # Still in same topic → new question
             q, ans, choices, diff = gen_question(topic, st["diff_idx"])
             st["answer"] = ans
             curr = f"**Topic:** {topic}  |  **Difficulty:** {diff}"
-            prog = f"Correct in topic: **{st['results'][topic]['correct'] % TOPIC_TARGET_CORRECT} / {TOPIC_TARGET_CORRECT}**"
+            prog = f"Correct in topic: **{st['correct_in_topic']} / {TOPIC_TARGET_CORRECT}**"
             score = f"**Overall correct:** {st['score_total']}"
             return (st.get("last_feedback",""), q, gr.update(choices=choices, value=None),
                     curr, prog, score, st, "")
 
+        # wire up (use the SAME state everywhere)
         start_btn.click(start_exam, [topic_select],
-                        [status, question_md, options, curr_topic, progress, score_box, gr.State(EXAM), report])
+                        [status, question_md, options, curr_topic, progress, score_box, exam_state, report])
+        check_btn.click(check_answer, [options, exam_state], [feedback, exam_state, report])
+        next_btn.click(next_step, [exam_state],
+                       [feedback, question_md, options, curr_topic, progress, score_box, exam_state, report])
 
-        check_btn.click(check_answer, [options, gr.State(EXAM)], [feedback, gr.State(EXAM), report])
-
-        next_btn.click(next_step, [gr.State(EXAM)],
-                       [feedback, question_md, options, curr_topic, progress, score_box, gr.State(EXAM), report])
-
-# ---------- FastAPI app + mount ----------
+# ------------- FastAPI + mount -------------
 app = FastAPI()
 
 @app.get("/healthz")
