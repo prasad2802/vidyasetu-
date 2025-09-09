@@ -1,6 +1,6 @@
 """
 Vidya Setu — Tutor (Groq) + Adaptive Multi-Topic Exam
-Kid-friendly UI • AI explanations • Student progress logging (CSV/Firestore)
+Kid-friendly UI • AI explanations • CSV/Firestore logging • Final report download
 """
 
 import os, random, math, requests, csv, datetime, uuid
@@ -14,10 +14,13 @@ TOPIC_TARGET_CORRECT = int(os.getenv("TOPIC_TARGET_CORRECT", "5"))
 DIFF_LEVELS = ["Easy", "Medium", "Hard"]
 
 # Logging config
-LOG_MODE = os.getenv("LOG_MODE", "csv").lower()            # "csv" or "firestore" (we auto-fallback to csv)
-LOG_PATH = os.getenv("LOG_PATH", "progress.csv")           # e.g., "/data/progress.csv" if you mount a volume
+LOG_MODE = os.getenv("LOG_MODE", "csv").lower()            # "csv" or "firestore" (auto-fallback to csv)
+LOG_PATH = os.getenv("LOG_PATH", "progress.csv")           # e.g., "/data/progress.csv" with a PV
 FS_COLLECTION = os.getenv("FS_COLLECTION", "attempts")
 USE_FIRESTORE = os.getenv("USE_FIRESTORE", "0") == "1"
+
+# Final report files
+REPORT_DIR = os.getenv("REPORT_DIR", "reports")
 
 # Optional Firestore
 try:
@@ -262,7 +265,6 @@ def _has_groq():
     return key.startswith("gsk_")
 
 def llm_explain_for_exam(topic, question_text, selected, correct):
-    """Short, targeted explanation for a wrong answer."""
     if not _has_groq():
         return ""
     prompt = (
@@ -275,7 +277,6 @@ def llm_explain_for_exam(topic, question_text, selected, correct):
     return "\n\n**Why:** " + out if out else ""
 
 def llm_followup(topic, question_text, correct):
-    """Optional: a slightly harder follow-up MCQ (A–D) from same concept."""
     if not _has_groq():
         return ""
     prompt = (
@@ -290,6 +291,7 @@ def llm_followup(topic, question_text, correct):
 def _csv_write_header_if_needed(path: str, fields: list[str]):
     newfile = not os.path.exists(path)
     if newfile:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         with open(path, "w", newline="", encoding="utf-8") as f:
             csv.DictWriter(f, fieldnames=fields).writeheader()
 
@@ -325,79 +327,57 @@ def _log_firestore(row: dict):
         return False
 
 def log_attempt(row: dict):
-    """Write to Firestore if enabled & available, else CSV."""
     ok = False
     if USE_FIRESTORE and firestore:
         ok = _log_firestore(row)
     if not ok:
         _log_csv(row)
 
-# --- Kids theme + CSS (back-compatible) ---
+# ----------------- Theme & CSS (Kid-friendly, back-compat) -----------------
 kids_theme = gr.themes.Soft(
     primary_hue="indigo",
     secondary_hue="pink",
     neutral_hue="gray",
 )
-# Older Gradio may not support radius_* setters; keep them in CSS instead
+# Older Gradio may not support setters like radius_*. Keep corners in CSS.
 try:
     kids_theme = kids_theme.set(
         body_text_size="17px",
         font=["ui-sans-serif", "system-ui", "Segoe UI", "Arial"],
-        # radius_* intentionally omitted here (CSS handles rounding)
     )
 except TypeError:
     pass
 
 KIDS_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700&family=Poppins:wght@400;600&display=swap');
-
 :root { --brand-1:#6D5EF7; --brand-2:#F471B5; --bg-1:#f7f8ff; --card-bg:#ffffffd9; }
-
 html, body, .gradio-container {
   background: radial-gradient(1200px 600px at 10% 0%, #fef3ff 0%, #f0f8ff 30%, #eef2ff 60%, #ffffff 100%) fixed;
 }
-
 .hero {
-  margin: 8px 0 18px 0;
-  background: linear-gradient(120deg, #a5b4fc 0%, #fbcfe8 50%, #fde68a 100%);
-  border-radius: 28px; padding: 28px 22px;
-  box-shadow: 0 8px 24px rgba(109, 94, 247, 0.15);
-  position: relative; overflow: hidden;
+  margin: 8px 0 18px 0; background: linear-gradient(120deg, #a5b4fc 0%, #fbcfe8 50%, #fde68a 100%);
+  border-radius: 28px; padding: 28px 22px; box-shadow: 0 8px 24px rgba(109, 94, 247, 0.15); position: relative; overflow: hidden;
 }
-.hero h1 {
-  font-family: 'Baloo 2','Poppins',system-ui,sans-serif;
-  font-size: 42px; margin: 0 0 6px 0; color: #1f2937;
-}
-.hero .subtitle {
-  font-family: 'Poppins',system-ui,sans-serif; font-size: 18px; color:#374151;
-}
-.hero .badge {
-  display:inline-block; background:#fff; color:#4f46e5; font-weight:700;
-  border-radius:999px; padding:6px 12px; margin-top:8px; box-shadow:0 6px 14px rgba(0,0,0,0.06);
-}
-
-.kid-card {
-  background: var(--card-bg); border-radius: 22px !important;
-  box-shadow: 0 10px 22px rgba(31, 41, 55, 0.08);
-  padding: 14px; border: 1px solid rgba(99,102,241,0.10);
-}
+.hero h1 { font-family: 'Baloo 2','Poppins',system-ui,sans-serif; font-size: 42px; margin: 0 0 6px 0; color: #1f2937; }
+.hero .subtitle { font-family: 'Poppins',system-ui,sans-serif; font-size: 18px; color:#374151; }
+.hero .badge { display:inline-block; background:#fff; color:#4f46e5; font-weight:700; border-radius:999px; padding:6px 12px; margin-top:8px; box-shadow:0 6px 14px rgba(0,0,0,0.06); }
+.kid-card { background: var(--card-bg); border-radius: 22px; box-shadow: 0 10px 22px rgba(31, 41, 55, 0.08); padding: 14px; border: 1px solid rgba(99,102,241,0.10); }
 .kid-section-title { font-weight: 700; font-size: 20px; color: #1f2937; }
-
-.kid-btn .btn { font-weight: 700; border-radius: 999px !important; padding: 10px 18px !important; }
-.kid-primary .btn { background: linear-gradient(90deg, var(--brand-1), var(--brand-2)) !important;
-  color: #fff !important; border:none !important; }
-
+.kid-btn .btn { font-weight: 700; border-radius: 999px; padding: 10px 18px; }
+.kid-primary .btn { background: linear-gradient(90deg, var(--brand-1), var(--brand-2)) !important; color:#fff !important; border:none !important; }
 .kid-radio .wrap-inner { gap: 10px; }
-.kid-radio input[type="radio"] + label {
-  background:#fff; border:2px solid #e5e7eb !important; border-radius:999px;
-  padding:8px 14px; box-shadow:0 4px 10px rgba(0,0,0,0.04);
-}
-.kid-radio input[type="radio"]:checked + label {
-  border-color:#6366f1 !important; background:#eef2ff;
-}
-
+.kid-radio input[type="radio"] + label { background:#fff; border:2px solid #e5e7eb !important; border-radius:999px; padding:8px 14px; box-shadow:0 4px 10px rgba(0,0,0,0.04); }
+.kid-radio input[type="radio"]:checked + label { border-color:#6366f1 !important; background:#eef2ff; }
 .kid-progress { background:#fff; border-radius:14px; padding:8px 12px; border:1px dashed #c7d2fe; }
 """
+
+# ---- Gradio container fallback (works on old/new versions) ----
+if hasattr(gr, "Box"):
+    Container = gr.Box
+elif hasattr(gr, "Column"):
+    Container = gr.Column
+else:
+    Container = gr.Group
 
 # ------------- Build UI -------------
 with gr.Blocks(theme=kids_theme, css=KIDS_CSS, title="Vidya Setu — Tutor + Adaptive Exam") as demo:
@@ -411,7 +391,7 @@ with gr.Blocks(theme=kids_theme, css=KIDS_CSS, title="Vidya Setu — Tutor + Ada
 
     # ----- Tab 1: Tutor -----
     with gr.Tab("Tutor (Groq)"):
-        with gr.Box(elem_classes=["kid-card"]):
+        with Container(elem_classes=["kid-card"]):
             q = gr.Textbox(label="📝 Ask a question")
             want_hint = gr.Checkbox(label="💡 Hint only")
             ans = gr.Textbox(label="🤖 Tutor answer")
@@ -420,7 +400,7 @@ with gr.Blocks(theme=kids_theme, css=KIDS_CSS, title="Vidya Setu — Tutor + Ada
 
     # ----- Tab 2: Adaptive Exam -----
     with gr.Tab("Adaptive Exam"):
-        with gr.Box(elem_classes=["kid-card"]):
+        with Container(elem_classes=["kid-card"]):
             gr.Markdown(
                 f"### 🚀 How it works\nEach topic continues until you get **{TOPIC_TARGET_CORRECT} correct**. "
                 "Difficulty adapts up/down. Final report at the end.",
@@ -434,7 +414,7 @@ with gr.Blocks(theme=kids_theme, css=KIDS_CSS, title="Vidya Setu — Tutor + Ada
             )
             start_btn = gr.Button("Start Exam ▶", elem_classes=["kid-btn","kid-primary"])
 
-        with gr.Box(elem_classes=["kid-card"]):
+        with Container(elem_classes=["kid-card"]):
             status = gr.Markdown()
             question_md = gr.Markdown()
             options = gr.Radio(choices=[], label="Choose your answer", elem_classes=["kid-radio"])
@@ -444,14 +424,15 @@ with gr.Blocks(theme=kids_theme, css=KIDS_CSS, title="Vidya Setu — Tutor + Ada
             feedback = gr.Markdown()
 
         with gr.Row():
-            with gr.Box(elem_classes=["kid-card","kid-progress"]):
+            with Container(elem_classes=["kid-card","kid-progress"]):
                 curr_topic = gr.Markdown()
                 progress = gr.Markdown()
                 score_box = gr.Markdown()
 
         report = gr.Markdown()
-        with gr.Box(elem_classes=["kid-card"]):
+        with Container(elem_classes=["kid-card"]):
             csv_path_show = gr.Textbox(value=LOG_PATH, label="📁 CSV path", interactive=False)
+            report_file = gr.File(label="⬇️ Download Final Report", interactive=False)
             download_btn = gr.Button("Refresh CSV Path", elem_classes=["kid-btn"])
 
         # ✅ one shared state for this tab
@@ -469,7 +450,7 @@ with gr.Blocks(theme=kids_theme, css=KIDS_CSS, title="Vidya Setu — Tutor + Ada
         def start_exam(student, topics):
             if not topics:
                 return ("Please select at least one topic.", "", gr.update(choices=[], value=None),
-                        "", "", "", {}, "", LOG_PATH)
+                        "", "", "", {}, "", LOG_PATH, None)
             st = {
                 "student": (student or "anon").strip(),
                 "session": str(uuid.uuid4())[:8],
@@ -492,11 +473,11 @@ with gr.Blocks(theme=kids_theme, css=KIDS_CSS, title="Vidya Setu — Tutor + Ada
             curr   = f"**Topic:** {topic}  |  **Difficulty:** {diff}"
             prog   = f"Correct in topic: **0 / {TOPIC_TARGET_CORRECT}**"
             score  = f"**Overall correct:** 0"
-            return status, q, gr.update(choices=choices, value=None), curr, prog, score, st, "", LOG_PATH
+            return status, q, gr.update(choices=choices, value=None), curr, prog, score, st, "", LOG_PATH, None
 
         def check_answer(choice, st):
             if not st or st.get("answer") is None:
-                return "Click **Start Exam** first.", st, "", LOG_PATH
+                return "Click **Start Exam** first.", st, "", LOG_PATH, None
             topic = st["topics"][st["topic_idx"]]
             st["attempts_in_topic"] += 1
             st["results"][topic]["attempts"] += 1
@@ -522,7 +503,7 @@ with gr.Blocks(theme=kids_theme, css=KIDS_CSS, title="Vidya Setu — Tutor + Ada
             try:
                 log_attempt(row)
             except Exception:
-                pass  # never break the UI if logging fails
+                pass
 
             # --- adapt + AI messages ---
             if is_correct:
@@ -538,12 +519,12 @@ with gr.Blocks(theme=kids_theme, css=KIDS_CSS, title="Vidya Setu — Tutor + Ada
                 st["diff_idx"] = adapt(False, st["diff_idx"])
 
             st["last_feedback"] = msg
-            return msg, st, "", LOG_PATH
+            return msg, st, "", LOG_PATH, None
 
         def next_step(st):
             if not st or "topics" not in st:
                 return ("Click **Start Exam** first.", "", gr.update(choices=[], value=None),
-                        "", "", "", st, "", LOG_PATH)
+                        "", "", "", st, "", LOG_PATH, None)
             topics = st["topics"]
             topic  = topics[st["topic_idx"]]
 
@@ -568,8 +549,16 @@ with gr.Blocks(theme=kids_theme, css=KIDS_CSS, title="Vidya Setu — Tutor + Ada
                     if os.getenv("GROQ_API_KEY"):
                         lines.append("\n_Status: GROQ key present — AI hints & follow-ups enabled._")
                     report_md = "\n".join(lines)
+
+                    # Save report to a file
+                    os.makedirs(REPORT_DIR, exist_ok=True)
+                    fname = f"report_{st.get('student','anon')}_{st.get('session','')}.md"
+                    report_path = os.path.join(REPORT_DIR, fname)
+                    with open(report_path, "w", encoding="utf-8") as f:
+                        f.write(report_md)
+
                     return ("🎉 Exam finished!", "", gr.update(choices=[], value=None),
-                            "", "", f"**Overall correct:** {st['score_total']}", st, report_md, LOG_PATH)
+                            "", "", f"**Overall correct:** {st['score_total']}", st, report_md, LOG_PATH, report_path)
 
                 # Move to first question of next topic
                 topic = topics[st["topic_idx"]]
@@ -580,7 +569,7 @@ with gr.Blocks(theme=kids_theme, css=KIDS_CSS, title="Vidya Setu — Tutor + Ada
                 prog = f"Correct in topic: **0 / {TOPIC_TARGET_CORRECT}**"
                 score = f"**Overall correct:** {st['score_total']}"
                 return ("➡️ Topic complete. Moving on.", q, gr.update(choices=choices, value=None),
-                        curr, prog, score, st, "", LOG_PATH)
+                        curr, prog, score, st, "", LOG_PATH, None)
 
             # Still in same topic → new question
             q, ans, choices, diff = gen_question(topic, st["diff_idx"])
@@ -590,16 +579,21 @@ with gr.Blocks(theme=kids_theme, css=KIDS_CSS, title="Vidya Setu — Tutor + Ada
             prog = f"Correct in topic: **{st['correct_in_topic']} / {TOPIC_TARGET_CORRECT}**"
             score = f"**Overall correct:** {st['score_total']}"
             return (st.get("last_feedback",""), q, gr.update(choices=choices, value=None),
-                    curr, prog, score, st, "", LOG_PATH)
+                    curr, prog, score, st, "", LOG_PATH, None)
 
         # wire up (same shared state everywhere)
-        start_btn.click(start_exam, [student_id, topic_select],
-                        [status, question_md, options, curr_topic, progress, score_box, exam_state, report, csv_path_show])
-        check_btn.click(check_answer, [options, exam_state],
-                        [feedback, exam_state, report, csv_path_show])
-        next_btn.click(next_step, [exam_state],
-                       [feedback, question_md, options, curr_topic, progress, score_box, exam_state, report, csv_path_show])
-
+        start_btn.click(
+            start_exam, [student_id, topic_select],
+            [status, question_md, options, curr_topic, progress, score_box, exam_state, report, csv_path_show, report_file]
+        )
+        check_btn.click(
+            check_answer, [options, exam_state],
+            [feedback, exam_state, report, csv_path_show, report_file]
+        )
+        next_btn.click(
+            next_step, [exam_state],
+            [feedback, question_md, options, curr_topic, progress, score_box, exam_state, report, csv_path_show, report_file]
+        )
         download_btn.click(lambda: LOG_PATH, [], [csv_path_show])
 
 # ------------- FastAPI + mount -------------
@@ -610,4 +604,3 @@ def healthz():
     return {"ok": True}
 
 app = gr.mount_gradio_app(app, demo, path="/")
-
