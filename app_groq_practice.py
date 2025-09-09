@@ -332,18 +332,21 @@ def log_attempt(row: dict):
     if not ok:
         _log_csv(row)
 
-# ----------------- Theme & CSS (Kid-friendly) -----------------
+# --- Kids theme + CSS (back-compatible) ---
 kids_theme = gr.themes.Soft(
     primary_hue="indigo",
     secondary_hue="pink",
     neutral_hue="gray",
-).set(
-    body_text_size="17px",
-    radius_md="16px",
-    radius_lg="20px",
-    radius_xl="28px",
-    font=["ui-sans-serif", "system-ui", "Segoe UI", "Arial"],
 )
+# Older Gradio may not support radius_* setters; keep them in CSS instead
+try:
+    kids_theme = kids_theme.set(
+        body_text_size="17px",
+        font=["ui-sans-serif", "system-ui", "Segoe UI", "Arial"],
+        # radius_* intentionally omitted here (CSS handles rounding)
+    )
+except TypeError:
+    pass
 
 KIDS_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700&family=Poppins:wght@400;600&display=swap');
@@ -607,3 +610,4 @@ def healthz():
     return {"ok": True}
 
 app = gr.mount_gradio_app(app, demo, path="/")
+
