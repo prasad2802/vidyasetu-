@@ -251,6 +251,36 @@ TOPICS: Dict[str, callable] = {
     "Chemistry: Symbols & Atomic Numbers": q_chem,
 }
 
+# --------- NEW: AI helpers for the Exam tab ---------
+def _has_groq():
+    key = (os.getenv("GROQ_API_KEY") or "").strip()
+    return key.startswith("gsk_")
+
+def llm_explain_for_exam(topic, question_text, selected, correct):
+    """Short, targeted explanation for a wrong answer."""
+    if not _has_groq():
+        return ""
+    prompt = (
+        "You are a concise teacher. First explain briefly why the selected option is wrong, "
+        "then show the correct method in 2–3 short steps. Keep it under 120 words.\n\n"
+        f"Topic: {topic}\nQuestion: {question_text}\n"
+        f"Student chose: {selected}\nCorrect answer: {correct}"
+    )
+    out = explain_with_groq(prompt)
+    return "\n\n**Why:** " + out if out else ""
+
+def llm_followup(topic, question_text, correct):
+    """Optional: a slightly harder follow-up MCQ (A–D) from same concept."""
+    if not _has_groq():
+        return ""
+    prompt = (
+        "Create ONE slightly harder follow-up MCQ (A–D) on the same concept. "
+        "Return exactly:\nQuestion\nA) ...\nB) ...\nC) ...\nD) ...\nAnswer: X\n\n"
+        f"Topic: {topic}\nSeed question: {question_text}\nSeed answer: {correct}"
+    )
+    out = explain_with_groq(prompt)
+    return "\n\n**Try this:**\n" + out if out else ""
+
 # ------------- Build UI -------------
 with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
     gr.Markdown("# Vidya Setu — Personalized Tutor & Adaptive Exam")
@@ -317,10 +347,12 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
                 "answer": None,
                 "score_total": 0,
                 "last_feedback": "",
+                "last_question": "",          # NEW: remember question text
             }
             topic = st["topics"][0]
             q, ans, choices, diff = gen_question(topic, st["diff_idx"])
             st["answer"] = ans
+            st["last_question"] = q         # NEW
             status = f"**Exam started** with topics: {', '.join(topics)}"
             curr   = f"**Topic:** {topic}  |  **Difficulty:** {diff}"
             prog   = f"Correct in topic: **0 / {TOPIC_TARGET_CORRECT}**"
@@ -339,10 +371,14 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
                 st["correct_in_topic"] += 1
                 st["results"][topic]["correct"] += 1
                 st["score_total"] += 1
-                msg = "✅ Correct!"
+                # Optional AI follow-up on correct
+                follow = llm_followup(topic, st.get("last_question",""), st["answer"])
+                msg = "✅ Correct!" + (f"{follow}" if follow else "")
                 st["diff_idx"] = adapt(True, st["diff_idx"])
             else:
-                msg = f"❌ Wrong. Correct answer: **{st['answer']}**"
+                # AI explanation on wrong
+                ai_note = llm_explain_for_exam(topic, st.get("last_question",""), choice, st["answer"])
+                msg = f"❌ Wrong. Correct answer: **{st['answer']}**" + (f"{ai_note}" if ai_note else "")
                 st["diff_idx"] = adapt(False, st["diff_idx"])
 
             st["last_feedback"] = msg
@@ -383,6 +419,7 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
                 topic = topics[st["topic_idx"]]
                 q, ans, choices, diff = gen_question(topic, st["diff_idx"])
                 st["answer"] = ans
+                st["last_question"] = q     # NEW
                 curr = f"**Next topic:** {topic}  |  **Difficulty:** {diff}"
                 prog = f"Correct in topic: **0 / {TOPIC_TARGET_CORRECT}**"
                 score = f"**Overall correct:** {st['score_total']}"
@@ -392,6 +429,7 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
             # Still in same topic → new question
             q, ans, choices, diff = gen_question(topic, st["diff_idx"])
             st["answer"] = ans
+            st["last_question"] = q         # NEW
             curr = f"**Topic:** {topic}  |  **Difficulty:** {diff}"
             prog = f"Correct in topic: **{st['correct_in_topic']} / {TOPIC_TARGET_CORRECT}**"
             score = f"**Overall correct:** {st['score_total']}"
