@@ -1,9 +1,9 @@
 """
 Vidya Setu — Tutor (Groq) + Adaptive Multi-Topic Exam
-Now with Student Progress Dataset (CSV by default, Firestore optional)
+Kid-friendly UI • AI explanations • Student progress logging (CSV/Firestore)
 """
 
-import os, time, random, math, requests, csv, datetime, uuid
+import os, random, math, requests, csv, datetime, uuid
 from typing import List, Tuple, Dict
 from fastapi import FastAPI
 import gradio as gr
@@ -14,22 +14,18 @@ TOPIC_TARGET_CORRECT = int(os.getenv("TOPIC_TARGET_CORRECT", "5"))
 DIFF_LEVELS = ["Easy", "Medium", "Hard"]
 
 # Logging config
-LOG_MODE = os.getenv("LOG_MODE", "csv").lower()            # "csv" or "firestore"
-LOG_PATH = os.getenv("LOG_PATH", "progress.csv")           # CSV path (e.g., "/data/progress.csv" on Railway PV)
-FS_COLLECTION = os.getenv("FS_COLLECTION", "attempts")     # Firestore collection name
+LOG_MODE = os.getenv("LOG_MODE", "csv").lower()            # "csv" or "firestore" (we auto-fallback to csv)
+LOG_PATH = os.getenv("LOG_PATH", "progress.csv")           # e.g., "/data/progress.csv" if you mount a volume
+FS_COLLECTION = os.getenv("FS_COLLECTION", "attempts")
 USE_FIRESTORE = os.getenv("USE_FIRESTORE", "0") == "1"
 
-# Try Firestore import (optional dependency)
+# Optional Firestore
 try:
     from google.cloud import firestore  # type: ignore
 except Exception:
     firestore = None
 
-# If you deploy behind a subpath, set this as an ENV on the platform:
-#   GRADIO_ROOT_PATH=/tutor
-# Do NOT hardcode it here.
-
-# ------------- Tutor (Groq) -------------
+# ------------- Groq Tutor -------------
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_FALLBACKS = [
     os.getenv("GROQ_MODEL", "").strip() or "llama-3.3-70b-versatile",
@@ -66,9 +62,9 @@ def explain_with_groq(prompt: str) -> str:
                 _LAST_WORKING_MODEL = model
                 return r.json()["choices"][0]["message"]["content"].strip()
             txt = r.text[:350]
-            if r.status_code in (401, 403):  # bad key
+            if r.status_code in (401, 403):
                 return f"❌ Groq {r.status_code} {txt}"
-            if r.status_code in (404, 422, 429):  # try another model
+            if r.status_code in (404, 422, 429):
                 last_err = f"ℹ️ {r.status_code} on {model}: {txt}"
                 continue
             last_err = f"❌ HTTP {r.status_code} on {model}: {txt}"
@@ -237,7 +233,7 @@ def q_chem(diff: str):
     if random.choice([True, False]):
         q, ans = f"Symbol of **{name}**?", sym
         choices = _choices_with_distractors(ans, spread=2)
-        if len(choices) < 4:  # ensure 4 options
+        if len(choices) < 4:
             pool = [s for _, s, _ in CHEM]
             while len(choices) < 4:
                 choices.append(random.choice(pool))
@@ -311,7 +307,6 @@ def _get_fs_client():
         return _FS_CLIENT
     if not (USE_FIRESTORE and firestore):
         return None
-    # project can be auto-detected on Cloud Run; allow override via env
     try:
         project = os.getenv("FIRESTORE_PROJECT") or None
         _FS_CLIENT = firestore.Client(project=project)
@@ -337,49 +332,124 @@ def log_attempt(row: dict):
     if not ok:
         _log_csv(row)
 
+# ----------------- Theme & CSS (Kid-friendly) -----------------
+kids_theme = gr.themes.Soft(
+    primary_hue="indigo",
+    secondary_hue="pink",
+    neutral_hue="gray",
+).set(
+    body_text_size="17px",
+    radius_md="16px",
+    radius_lg="20px",
+    radius_xl="28px",
+    font=["ui-sans-serif", "system-ui", "Segoe UI", "Arial"],
+)
+
+KIDS_CSS = """
+@import url('https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700&family=Poppins:wght@400;600&display=swap');
+
+:root { --brand-1:#6D5EF7; --brand-2:#F471B5; --bg-1:#f7f8ff; --card-bg:#ffffffd9; }
+
+html, body, .gradio-container {
+  background: radial-gradient(1200px 600px at 10% 0%, #fef3ff 0%, #f0f8ff 30%, #eef2ff 60%, #ffffff 100%) fixed;
+}
+
+.hero {
+  margin: 8px 0 18px 0;
+  background: linear-gradient(120deg, #a5b4fc 0%, #fbcfe8 50%, #fde68a 100%);
+  border-radius: 28px; padding: 28px 22px;
+  box-shadow: 0 8px 24px rgba(109, 94, 247, 0.15);
+  position: relative; overflow: hidden;
+}
+.hero h1 {
+  font-family: 'Baloo 2','Poppins',system-ui,sans-serif;
+  font-size: 42px; margin: 0 0 6px 0; color: #1f2937;
+}
+.hero .subtitle {
+  font-family: 'Poppins',system-ui,sans-serif; font-size: 18px; color:#374151;
+}
+.hero .badge {
+  display:inline-block; background:#fff; color:#4f46e5; font-weight:700;
+  border-radius:999px; padding:6px 12px; margin-top:8px; box-shadow:0 6px 14px rgba(0,0,0,0.06);
+}
+
+.kid-card {
+  background: var(--card-bg); border-radius: 22px !important;
+  box-shadow: 0 10px 22px rgba(31, 41, 55, 0.08);
+  padding: 14px; border: 1px solid rgba(99,102,241,0.10);
+}
+.kid-section-title { font-weight: 700; font-size: 20px; color: #1f2937; }
+
+.kid-btn .btn { font-weight: 700; border-radius: 999px !important; padding: 10px 18px !important; }
+.kid-primary .btn { background: linear-gradient(90deg, var(--brand-1), var(--brand-2)) !important;
+  color: #fff !important; border:none !important; }
+
+.kid-radio .wrap-inner { gap: 10px; }
+.kid-radio input[type="radio"] + label {
+  background:#fff; border:2px solid #e5e7eb !important; border-radius:999px;
+  padding:8px 14px; box-shadow:0 4px 10px rgba(0,0,0,0.04);
+}
+.kid-radio input[type="radio"]:checked + label {
+  border-color:#6366f1 !important; background:#eef2ff;
+}
+
+.kid-progress { background:#fff; border-radius:14px; padding:8px 12px; border:1px dashed #c7d2fe; }
+"""
+
 # ------------- Build UI -------------
-with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
-    gr.Markdown("# Vidya Setu — Personalized Tutor & Adaptive Exam")
+with gr.Blocks(theme=kids_theme, css=KIDS_CSS, title="Vidya Setu — Tutor + Adaptive Exam") as demo:
+    gr.HTML("""
+    <div class="hero">
+      <div class="badge">✨ Kid-Friendly • Safe • Fun</div>
+      <h1>🎒 Vidya Setu</h1>
+      <div class="subtitle">Learn • Practice • Shine</div>
+    </div>
+    """)
 
     # ----- Tab 1: Tutor -----
     with gr.Tab("Tutor (Groq)"):
-        q = gr.Textbox(label="Ask a question")
-        want_hint = gr.Checkbox(label="Hint only")
-        ans = gr.Textbox(label="Tutor answer")
-        dbg = gr.Textbox(label="Debug/State")
-        gr.Button("Send").click(tutor, [q, want_hint], [ans, dbg])
+        with gr.Box(elem_classes=["kid-card"]):
+            q = gr.Textbox(label="📝 Ask a question")
+            want_hint = gr.Checkbox(label="💡 Hint only")
+            ans = gr.Textbox(label="🤖 Tutor answer")
+            dbg = gr.Textbox(label="🔧 Debug/State")
+            gr.Button("Send", elem_classes=["kid-btn","kid-primary"]).click(tutor, [q, want_hint], [ans, dbg])
 
     # ----- Tab 2: Adaptive Exam -----
     with gr.Tab("Adaptive Exam"):
-        gr.Markdown(
-            f"**How it works:** Each topic continues until you get **{TOPIC_TARGET_CORRECT} correct**. "
-            "Difficulty adapts up/down. When a topic reaches the target, we move to the next. Final report at the end."
-        )
+        with gr.Box(elem_classes=["kid-card"]):
+            gr.Markdown(
+                f"### 🚀 How it works\nEach topic continues until you get **{TOPIC_TARGET_CORRECT} correct**. "
+                "Difficulty adapts up/down. Final report at the end.",
+                elem_classes=["kid-section-title"]
+            )
+            student_id = gr.Textbox(label="👧👦 Student ID (for progress tracking)", placeholder="e.g., 2025A001")
+            topic_select = gr.CheckboxGroup(
+                choices=list(TOPICS.keys()),
+                value=["Fractions", "Decimals", "Percentages"],
+                label="🎯 Select topics (in order)",
+            )
+            start_btn = gr.Button("Start Exam ▶", elem_classes=["kid-btn","kid-primary"])
 
-        student_id = gr.Textbox(label="Student ID (for progress tracking)", placeholder="e.g., 2025A001")
-        topic_select = gr.CheckboxGroup(
-            choices=list(TOPICS.keys()),
-            value=["Fractions", "Decimals", "Percentages"],
-            label="Select topics (in order)",
-        )
-        start_btn = gr.Button("Start Exam", variant="primary")
-
-        status = gr.Markdown()
-        question_md = gr.Markdown()
-        options = gr.Radio(choices=[], label="Choose your answer")
-        check_btn = gr.Button("Check")
-        feedback = gr.Markdown()
-        next_btn = gr.Button("Next ▶")
+        with gr.Box(elem_classes=["kid-card"]):
+            status = gr.Markdown()
+            question_md = gr.Markdown()
+            options = gr.Radio(choices=[], label="Choose your answer", elem_classes=["kid-radio"])
+            with gr.Row():
+                check_btn = gr.Button("Check ✅", elem_classes=["kid-btn","kid-primary"])
+                next_btn = gr.Button("Next ▶", elem_classes=["kid-btn"])
+            feedback = gr.Markdown()
 
         with gr.Row():
-            curr_topic = gr.Markdown()
-            progress = gr.Markdown()
-            score_box = gr.Markdown()
+            with gr.Box(elem_classes=["kid-card","kid-progress"]):
+                curr_topic = gr.Markdown()
+                progress = gr.Markdown()
+                score_box = gr.Markdown()
 
         report = gr.Markdown()
-        # Optional: quick link to download CSV (works in most hosts)
-        csv_path_show = gr.Textbox(value=LOG_PATH, label="CSV path", interactive=False)
-        download_btn = gr.Button("Refresh CSV Path")
+        with gr.Box(elem_classes=["kid-card"]):
+            csv_path_show = gr.Textbox(value=LOG_PATH, label="📁 CSV path", interactive=False)
+            download_btn = gr.Button("Refresh CSV Path", elem_classes=["kid-btn"])
 
         # ✅ one shared state for this tab
         exam_state = gr.State({})
@@ -451,7 +521,7 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
             except Exception:
                 pass  # never break the UI if logging fails
 
-            # --- adapt + messaging ---
+            # --- adapt + AI messages ---
             if is_correct:
                 st["correct_in_topic"] += 1
                 st["results"][topic]["correct"] += 1
@@ -493,7 +563,7 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
                     if weak:
                         lines.append("\n**Focus on:** " + ", ".join([f"{t} ({a}%)" for t,a in weak]))
                     if os.getenv("GROQ_API_KEY"):
-                        lines.append("\n_Status: GROQ key present — AI hints available._")
+                        lines.append("\n_Status: GROQ key present — AI hints & follow-ups enabled._")
                     report_md = "\n".join(lines)
                     return ("🎉 Exam finished!", "", gr.update(choices=[], value=None),
                             "", "", f"**Overall correct:** {st['score_total']}", st, report_md, LOG_PATH)
@@ -519,7 +589,7 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
             return (st.get("last_feedback",""), q, gr.update(choices=choices, value=None),
                     curr, prog, score, st, "", LOG_PATH)
 
-        # wire up (use the SAME state everywhere)
+        # wire up (same shared state everywhere)
         start_btn.click(start_exam, [student_id, topic_select],
                         [status, question_md, options, curr_topic, progress, score_box, exam_state, report, csv_path_show])
         check_btn.click(check_answer, [options, exam_state],
