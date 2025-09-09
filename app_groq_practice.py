@@ -1,12 +1,9 @@
 """
 Vidya Setu — Tutor (Groq) + Adaptive Multi-Topic Exam
-- Tab 1: Tutor (uses GROQ_API_KEY) — stepwise/explainer
-- Tab 2: Adaptive Exam — auto-generated MCQs, difficulty up/down,
-  target N correct per topic, auto-advance, final report
-- FastAPI + Gradio mounted at "/"
+Now with Student Progress Dataset (CSV by default, Firestore optional)
 """
 
-import os, time, random, math, requests
+import os, time, random, math, requests, csv, datetime, uuid
 from typing import List, Tuple, Dict
 from fastapi import FastAPI
 import gradio as gr
@@ -15,6 +12,18 @@ import sympy as sp
 # ---------------- Config ----------------
 TOPIC_TARGET_CORRECT = int(os.getenv("TOPIC_TARGET_CORRECT", "5"))
 DIFF_LEVELS = ["Easy", "Medium", "Hard"]
+
+# Logging config
+LOG_MODE = os.getenv("LOG_MODE", "csv").lower()            # "csv" or "firestore"
+LOG_PATH = os.getenv("LOG_PATH", "progress.csv")           # CSV path (e.g., "/data/progress.csv" on Railway PV)
+FS_COLLECTION = os.getenv("FS_COLLECTION", "attempts")     # Firestore collection name
+USE_FIRESTORE = os.getenv("USE_FIRESTORE", "0") == "1"
+
+# Try Firestore import (optional dependency)
+try:
+    from google.cloud import firestore  # type: ignore
+except Exception:
+    firestore = None
 
 # If you deploy behind a subpath, set this as an ENV on the platform:
 #   GRADIO_ROOT_PATH=/tutor
@@ -251,7 +260,7 @@ TOPICS: Dict[str, callable] = {
     "Chemistry: Symbols & Atomic Numbers": q_chem,
 }
 
-# --------- NEW: AI helpers for the Exam tab ---------
+# --------- AI helpers for the Exam tab ---------
 def _has_groq():
     key = (os.getenv("GROQ_API_KEY") or "").strip()
     return key.startswith("gsk_")
@@ -281,6 +290,53 @@ def llm_followup(topic, question_text, correct):
     out = explain_with_groq(prompt)
     return "\n\n**Try this:**\n" + out if out else ""
 
+# --------- Logging (CSV / Firestore) ----------
+def _csv_write_header_if_needed(path: str, fields: list[str]):
+    newfile = not os.path.exists(path)
+    if newfile:
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            csv.DictWriter(f, fieldnames=fields).writeheader()
+
+def _log_csv(row: dict):
+    fields = ["ts","student","session","topic_index","topic","difficulty","question",
+              "answer","selected","is_correct","topic_correct","topic_attempts","overall_correct"]
+    _csv_write_header_if_needed(LOG_PATH, fields)
+    with open(LOG_PATH, "a", newline="", encoding="utf-8") as f:
+        csv.DictWriter(f, fieldnames=fields).writerow(row)
+
+_FS_CLIENT = None
+def _get_fs_client():
+    global _FS_CLIENT
+    if _FS_CLIENT is not None:
+        return _FS_CLIENT
+    if not (USE_FIRESTORE and firestore):
+        return None
+    # project can be auto-detected on Cloud Run; allow override via env
+    try:
+        project = os.getenv("FIRESTORE_PROJECT") or None
+        _FS_CLIENT = firestore.Client(project=project)
+        return _FS_CLIENT
+    except Exception:
+        return None
+
+def _log_firestore(row: dict):
+    client = _get_fs_client()
+    if not client:
+        return False
+    try:
+        client.collection(FS_COLLECTION).add(row)
+        return True
+    except Exception:
+        return False
+
+def log_attempt(row: dict):
+    """Write to Firestore if enabled & available, else CSV."""
+    ok = False
+    if USE_FIRESTORE and firestore:
+        ok = _log_firestore(row)
+    if not ok:
+        _log_csv(row)
+
 # ------------- Build UI -------------
 with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
     gr.Markdown("# Vidya Setu — Personalized Tutor & Adaptive Exam")
@@ -300,6 +356,7 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
             "Difficulty adapts up/down. When a topic reaches the target, we move to the next. Final report at the end."
         )
 
+        student_id = gr.Textbox(label="Student ID (for progress tracking)", placeholder="e.g., 2025A001")
         topic_select = gr.CheckboxGroup(
             choices=list(TOPICS.keys()),
             value=["Fractions", "Decimals", "Percentages"],
@@ -320,6 +377,9 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
             score_box = gr.Markdown()
 
         report = gr.Markdown()
+        # Optional: quick link to download CSV (works in most hosts)
+        csv_path_show = gr.Textbox(value=LOG_PATH, label="CSV path", interactive=False)
+        download_btn = gr.Button("Refresh CSV Path")
 
         # ✅ one shared state for this tab
         exam_state = gr.State({})
@@ -333,11 +393,13 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
         def adapt(up: bool, idx: int) -> int:
             return min(2, idx + 1) if up else max(0, idx - 1)
 
-        def start_exam(topics):
+        def start_exam(student, topics):
             if not topics:
                 return ("Please select at least one topic.", "", gr.update(choices=[], value=None),
-                        "", "", "", {}, "")
+                        "", "", "", {}, "", LOG_PATH)
             st = {
+                "student": (student or "anon").strip(),
+                "session": str(uuid.uuid4())[:8],
                 "topics": topics,
                 "topic_idx": 0,
                 "diff_idx": 0,                # start Easy
@@ -347,47 +409,68 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
                 "answer": None,
                 "score_total": 0,
                 "last_feedback": "",
-                "last_question": "",          # NEW: remember question text
+                "last_question": "",
             }
             topic = st["topics"][0]
             q, ans, choices, diff = gen_question(topic, st["diff_idx"])
             st["answer"] = ans
-            st["last_question"] = q         # NEW
-            status = f"**Exam started** with topics: {', '.join(topics)}"
+            st["last_question"] = q
+            status = f"**Exam started** for **{st['student']}** | Session: `{st['session']}` | Topics: {', '.join(topics)}"
             curr   = f"**Topic:** {topic}  |  **Difficulty:** {diff}"
             prog   = f"Correct in topic: **0 / {TOPIC_TARGET_CORRECT}**"
             score  = f"**Overall correct:** 0"
-            return status, q, gr.update(choices=choices, value=None), curr, prog, score, st, ""
+            return status, q, gr.update(choices=choices, value=None), curr, prog, score, st, "", LOG_PATH
 
         def check_answer(choice, st):
             if not st or st.get("answer") is None:
-                return "Click **Start Exam** first.", st, ""
+                return "Click **Start Exam** first.", st, "", LOG_PATH
             topic = st["topics"][st["topic_idx"]]
             st["attempts_in_topic"] += 1
             st["results"][topic]["attempts"] += 1
 
             is_correct = (choice is not None) and (str(choice).strip() == str(st["answer"]).strip())
+
+            # --- log attempt ---
+            row = {
+                "ts": datetime.datetime.utcnow().isoformat(),
+                "student": st.get("student","anon"),
+                "session": st.get("session",""),
+                "topic_index": st["topic_idx"],
+                "topic": topic,
+                "difficulty": DIFF_LEVELS[st["diff_idx"]],
+                "question": st.get("last_question",""),
+                "answer": st["answer"],
+                "selected": (choice or ""),
+                "is_correct": int(is_correct),
+                "topic_correct": st["correct_in_topic"] + (1 if is_correct else 0),
+                "topic_attempts": st["attempts_in_topic"],
+                "overall_correct": st["score_total"] + (1 if is_correct else 0),
+            }
+            try:
+                log_attempt(row)
+            except Exception:
+                pass  # never break the UI if logging fails
+
+            # --- adapt + messaging ---
             if is_correct:
                 st["correct_in_topic"] += 1
                 st["results"][topic]["correct"] += 1
                 st["score_total"] += 1
-                # Optional AI follow-up on correct
                 follow = llm_followup(topic, st.get("last_question",""), st["answer"])
                 msg = "✅ Correct!" + (f"{follow}" if follow else "")
                 st["diff_idx"] = adapt(True, st["diff_idx"])
             else:
-                # AI explanation on wrong
                 ai_note = llm_explain_for_exam(topic, st.get("last_question",""), choice, st["answer"])
                 msg = f"❌ Wrong. Correct answer: **{st['answer']}**" + (f"{ai_note}" if ai_note else "")
                 st["diff_idx"] = adapt(False, st["diff_idx"])
 
             st["last_feedback"] = msg
-            return msg, st, ""
+            return msg, st, "", LOG_PATH
 
         def next_step(st):
             if not st or "topics" not in st:
                 return ("Click **Start Exam** first.", "", gr.update(choices=[], value=None),
-                        "", "", "", st, "")
+                        "", "", "", st, "", LOG_PATH)
             topics = st["topics"]
             topic  = topics[st["topic_idx"]]
 
@@ -400,7 +483,7 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
 
                 if st["topic_idx"] >= len(topics):
                     # Final report
-                    lines = [f"### 📊 Final Report — overall correct: **{st['score_total']}**"]
+                    lines = [f"### 📊 Final Report — overall correct: **{st['score_total']}**  |  Student: **{st.get('student','anon')}**  |  Session: `{st.get('session','')}`"]
                     weak = []
                     for t, v in st["results"].items():
                         att = max(1, v["attempts"])
@@ -413,35 +496,38 @@ with gr.Blocks(title="Vidya Setu — Tutor + Adaptive Exam") as demo:
                         lines.append("\n_Status: GROQ key present — AI hints available._")
                     report_md = "\n".join(lines)
                     return ("🎉 Exam finished!", "", gr.update(choices=[], value=None),
-                            "", "", f"**Overall correct:** {st['score_total']}", st, report_md)
+                            "", "", f"**Overall correct:** {st['score_total']}", st, report_md, LOG_PATH)
 
                 # Move to first question of next topic
                 topic = topics[st["topic_idx"]]
                 q, ans, choices, diff = gen_question(topic, st["diff_idx"])
                 st["answer"] = ans
-                st["last_question"] = q     # NEW
+                st["last_question"] = q
                 curr = f"**Next topic:** {topic}  |  **Difficulty:** {diff}"
                 prog = f"Correct in topic: **0 / {TOPIC_TARGET_CORRECT}**"
                 score = f"**Overall correct:** {st['score_total']}"
                 return ("➡️ Topic complete. Moving on.", q, gr.update(choices=choices, value=None),
-                        curr, prog, score, st, "")
+                        curr, prog, score, st, "", LOG_PATH)
 
             # Still in same topic → new question
             q, ans, choices, diff = gen_question(topic, st["diff_idx"])
             st["answer"] = ans
-            st["last_question"] = q         # NEW
+            st["last_question"] = q
             curr = f"**Topic:** {topic}  |  **Difficulty:** {diff}"
             prog = f"Correct in topic: **{st['correct_in_topic']} / {TOPIC_TARGET_CORRECT}**"
             score = f"**Overall correct:** {st['score_total']}"
             return (st.get("last_feedback",""), q, gr.update(choices=choices, value=None),
-                    curr, prog, score, st, "")
+                    curr, prog, score, st, "", LOG_PATH)
 
         # wire up (use the SAME state everywhere)
-        start_btn.click(start_exam, [topic_select],
-                        [status, question_md, options, curr_topic, progress, score_box, exam_state, report])
-        check_btn.click(check_answer, [options, exam_state], [feedback, exam_state, report])
+        start_btn.click(start_exam, [student_id, topic_select],
+                        [status, question_md, options, curr_topic, progress, score_box, exam_state, report, csv_path_show])
+        check_btn.click(check_answer, [options, exam_state],
+                        [feedback, exam_state, report, csv_path_show])
         next_btn.click(next_step, [exam_state],
-                       [feedback, question_md, options, curr_topic, progress, score_box, exam_state, report])
+                       [feedback, question_md, options, curr_topic, progress, score_box, exam_state, report, csv_path_show])
+
+        download_btn.click(lambda: LOG_PATH, [], [csv_path_show])
 
 # ------------- FastAPI + mount -------------
 app = FastAPI()
